@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2019, MariaDB Corporation.
+Copyright (c) 1994, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -519,6 +519,10 @@ struct dtuple_t {
 /** Value of dtuple_t::magic_n */
 # define		DATA_TUPLE_MAGIC_N	65478679
 #endif /* UNIV_DEBUG */
+
+
+	/** @return number of externally stored fields */
+	inline ulint get_n_ext() const;
 };
 
 inline ulint dtuple_get_n_fields(const dtuple_t* tuple)
@@ -547,6 +551,16 @@ inline bool dfield_is_ext(const dfield_t* field)
 }
 /** Set the "external storage" flag */
 inline void dfield_set_ext(dfield_t* field) { field->ext = 1; }
+
+inline ulint dtuple_t::get_n_ext() const
+{
+  ulint n_ext= 0;
+  for (ulint i = 0; i < n_fields; i++)
+    if (dfield_is_ext(&fields[i]))
+      n_ext++;
+
+  return n_ext;
+}
 
 /** Gets number of virtual fields in a data tuple.
 @param[in]	tuple	dtuple to check
