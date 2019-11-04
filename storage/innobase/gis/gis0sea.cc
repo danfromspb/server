@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2016, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2018, MariaDB Corporation.
+Copyright (c) 2016, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -1327,7 +1327,7 @@ rtr_cur_restore_position(
 
 				ut_ad(!cmp_rec_rec(r_cursor->old_rec,
 						   rec, offsets1, offsets2,
-						   index));
+						   index,page_is_spatial_non_leaf(rec, index)));
 			}
 
 			mem_heap_free(heap);
@@ -1398,7 +1398,7 @@ search_again:
 			r_cursor->pos_state = BTR_PCUR_IS_POSITIONED;
 			ret = true;
 		} else if (!cmp_rec_rec(r_cursor->old_rec, rec, offsets1, offsets2,
-				 index)) {
+				 index,page_is_spatial_non_leaf(rec, index))) {
 			r_cursor->pos_state = BTR_PCUR_IS_POSITIONED;
 			ret = true;
 		}
@@ -1958,7 +1958,7 @@ rtr_cur_search_with_match(
 						  ULINT_UNDEFINED, &heap);
 
 			ut_ad(cmp_rec_rec(test_rec.r_rec, last_match_rec,
-					  offsets2, offsets, index) == 0);
+					  offsets2, offsets, index, false) == 0);
 #endif /* UNIV_DEBUG */
 			/* Pop the last match record and position on it */
 			match_rec->matched_recs->pop_back();

@@ -1258,6 +1258,16 @@ const rec_t*
 page_find_rec_max_not_deleted(
 	const page_t*	page);
 
+/** This function checks if the page in which record is present is a
+non-leaf node of a spatial index.
+param[in]       rec     Btree record
+param[in]       index   index
+@return TRUE if ok */
+bool page_is_spatial_non_leaf(
+/*==========================*/
+	const rec_t* rec,/*!< in: Btree record */
+	dict_index_t* index);/*!< in: index */
+
 #ifdef UNIV_MATERIALIZE
 #undef UNIV_INLINE
 #define UNIV_INLINE  UNIV_INLINE_ORIGINAL
