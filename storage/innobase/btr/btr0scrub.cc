@@ -369,7 +369,7 @@ btr_optimistic_scrub(
 		return DB_OVERFLOW;
 	}
 #endif
-	if (!btr_page_reorganize_block(false, scrub_compression_level, block,
+	if (!btr_page_reorganize_block(scrub_compression_level, block,
 				       index, mtr)) {
 		return DB_OVERFLOW;
 	}

@@ -444,7 +444,7 @@ btr_defragment_merge_pages(
 	// reorganizing the page, otherwise we need to reorganize the page
 	// first to release more space.
 	if (move_size > max_ins_size) {
-		if (!btr_page_reorganize_block(false, page_zip_level,
+		if (!btr_page_reorganize_block(page_zip_level,
 					       to_block, index,
 					       mtr)) {
 			if (!dict_index_is_clust(index)
