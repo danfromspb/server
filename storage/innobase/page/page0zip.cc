@@ -373,7 +373,7 @@ static void page_zip_compress_write_log(buf_block_t* block,
 
 	ut_ad(!dict_index_is_ibuf(index));
 
-	log_ptr = mlog_open(mtr, 11 + 2 + 2);
+	log_ptr = mlog_open(mtr, 11 + 11 + 2 + 2);
 
 	if (!log_ptr) {
 
@@ -400,26 +400,33 @@ static void page_zip_compress_write_log(buf_block_t* block,
 	compile_time_assert(FIL_PAGE_DATA <= PAGE_DATA);
 	ut_a(page_zip->m_end + trailer_size <= page_zip_get_size(page_zip));
 
-	log_ptr = mlog_write_initial_log_record_low(MLOG_ZIP_PAGE_COMPRESS,
+	log_ptr = mlog_write_initial_log_record_low(MLOG_INIT_FILE_PAGE2,
 						    block->page.id.space(),
 						    block->page.id.page_no(),
 						    log_ptr, mtr);
-	mach_write_to_2(log_ptr, ulint(page_zip->m_end - FIL_PAGE_TYPE));
-	log_ptr += 2;
-	mach_write_to_2(log_ptr, trailer_size);
-	log_ptr += 2;
-	mlog_close(mtr, log_ptr);
-
-	/* Write FIL_PAGE_PREV and FIL_PAGE_NEXT */
-	mlog_catenate_string(mtr, page_zip->data + FIL_PAGE_PREV, 4);
-	mlog_catenate_string(mtr, page_zip->data + FIL_PAGE_NEXT, 4);
-	/* Write most of the page header, the compressed stream and
-	the modification log. */
-	mlog_catenate_string(mtr, page_zip->data + FIL_PAGE_TYPE,
-			     ulint(page_zip->m_end - FIL_PAGE_TYPE));
-	/* Write the uncompressed trailer of the compressed page. */
-	mlog_catenate_string(mtr, page_zip->data + page_zip_get_size(page_zip)
-			     - trailer_size, trailer_size);
+	log_ptr = mlog_write_initial_log_record_low(MLOG_ZIP_WRITE_STRING,
+						    block->page.id.space(),
+						    block->page.id.page_no(),
+						    log_ptr, mtr);
+	mach_write_to_2(log_ptr, FIL_PAGE_PREV);
+	mach_write_to_2(log_ptr + 2, page_zip->m_end - FIL_PAGE_PREV);
+	mlog_close(mtr, log_ptr + 4);
+	mlog_catenate_string(mtr, page_zip->data + FIL_PAGE_PREV,
+			     page_zip->m_end - FIL_PAGE_PREV);
+	if (trailer_size) {
+		log_ptr = mlog_open(mtr, 11 + 2 + 2);
+		log_ptr = mlog_write_initial_log_record_low(
+			MLOG_ZIP_WRITE_STRING,
+			block->page.id.space(), block->page.id.page_no(),
+			log_ptr, mtr);
+		mach_write_to_2(log_ptr, page_zip_get_size(page_zip)
+				- trailer_size);
+		mach_write_to_2(log_ptr + 2, trailer_size);
+		mlog_close(mtr, log_ptr + 4);
+		mlog_catenate_string(mtr, page_zip->data
+				     + page_zip_get_size(page_zip)
+				     - trailer_size, trailer_size);
+	}
 	block->page.init_on_flush = true;
 }
 
