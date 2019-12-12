@@ -662,8 +662,11 @@ row_upd_rec_in_place(
 				  dfield_get_len(new_val));
 	}
 
-	if (page_zip) {
-		page_zip_write_rec(page_zip, rec, index, offsets, 0);
+	if (UNIV_LIKELY_NULL(page_zip)) {
+		mtr_t mtr;
+		mtr.start();
+		mtr.set_log_mode(MTR_LOG_NONE);
+		page_zip_write_rec(page_zip, rec, index, offsets, 0, &mtr);
 	}
 }
 

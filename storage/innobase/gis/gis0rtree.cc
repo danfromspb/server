@@ -291,7 +291,6 @@ rtr_update_mbr_field(
 	ulint		low_match = 0;
 	ulint		child;
 	ulint		rec_info;
-	page_zip_des_t*	page_zip;
 	bool		ins_suc = true;
 	ulint		cur2_pos = 0;
 	ulint		del_page_no = 0;
@@ -305,7 +304,6 @@ rtr_update_mbr_field(
 	heap = mem_heap_create(100);
 	block = btr_cur_get_block(cursor);
 	ut_ad(page == buf_block_get_frame(block));
-	page_zip = buf_block_get_page_zip(block);
 
 	child = btr_node_ptr_get_child_page_no(rec, offsets);
 	const bool is_leaf = page_is_leaf(block->frame);
@@ -332,9 +330,10 @@ rtr_update_mbr_field(
 
 	if (rec_info & REC_INFO_MIN_REC_FLAG) {
 		/* When the rec is minimal rec in this level, we do
-		 in-place update for avoiding it move to other place. */
+		in-place update for avoiding it move to other place. */
+		page_zip_des_t*	page_zip = buf_block_get_page_zip(block);
 
-		if (page_zip) {
+		if (UNIV_LIKELY_NULL(page_zip)) {
 			/* Check if there's enough space for in-place
 			update the zip page. */
 			if (!btr_cur_update_alloc_zip(
@@ -377,8 +376,12 @@ rtr_update_mbr_field(
 			return(false);
 		}
 
-		if (page_zip) {
-			page_zip_write_rec(page_zip, rec, index, offsets, 0);
+		if (UNIV_LIKELY_NULL(page_zip)) {
+			const mtr_log_t log_mode
+				= mtr->set_log_mode(MTR_LOG_NONE);
+			page_zip_write_rec(page_zip, rec, index, offsets, 0,
+					   mtr);
+			mtr->set_log_mode(log_mode);
 		}
 
 		if (cursor2) {

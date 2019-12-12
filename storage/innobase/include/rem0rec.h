@@ -250,6 +250,7 @@ rec_get_n_owned_new(
 /*================*/
 	const rec_t*	rec)	/*!< in: new-style physical record */
 	MY_ATTRIBUTE((warn_unused_result));
+
 /******************************************************//**
 The following function is used to retrieve the info bits of
 a record.
