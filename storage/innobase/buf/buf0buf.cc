@@ -6033,13 +6033,35 @@ release_page:
 		ut_ad(buf_pool->n_pend_reads > 0);
 		buf_pool->n_pend_reads--;
 		buf_pool->stat.n_pages_read++;
+		ut_ad(!uncompressed || !bpage->zip.data
+		      || !recv_recovery_is_on()
+		      || buf_page_can_relocate(bpage));
+		mutex_exit(block_mutex);
 
 		if (uncompressed) {
-			rw_lock_x_unlock_gen(&((buf_block_t*) bpage)->lock,
-					     BUF_IO_READ);
-		}
+			if (UNIV_LIKELY_NULL(bpage->zip.data)
+			    && recv_recovery_is_on()) {
+				/* FIXME: Remove after MDEV-19514 */
+#if 0 // FIXME: prevent race condition with page eviction
+				rw_lock_t* hash_lock = buf_page_hash_lock_get(
+					buf_pool, bpage->id);
+				rw_lock_x_lock(hash_lock);
+#endif
+				rw_lock_x_unlock_gen(
+					&reinterpret_cast<buf_block_t*>(bpage)
+					->lock, BUF_IO_READ);
+				if (!buf_LRU_free_page(bpage, false)) {
+					ut_ad(!"could not remove");
+				}
+#if 0 // FIXME: prevent race condition with page eviction
+				rw_lock_x_unlock(hash_lock);
+#endif
+				goto func_exit;
+			}
 
-		mutex_exit(block_mutex);
+			rw_lock_x_unlock_gen(&reinterpret_cast<buf_block_t*>
+					     (bpage)->lock, BUF_IO_READ);
+		}
 	} else {
 		/* Write means a flush operation: call the completion
 		routine in the flush system */
@@ -6073,7 +6095,7 @@ release_page:
 	DBUG_PRINT("ib_buf", ("%s page %u:%u",
 			      io_type == BUF_IO_READ ? "read" : "wrote",
 			      bpage->id.space(), bpage->id.page_no()));
-
+func_exit:
 	buf_pool_mutex_exit(buf_pool);
 
 	return DB_SUCCESS;

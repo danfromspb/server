@@ -1413,7 +1413,8 @@ rec_convert_dtuple_to_rec_old(
 	/* Set the info bits of the record */
 	rec_set_info_bits_old(rec, dtuple_get_info_bits(dtuple)
 			      & REC_INFO_BITS_MASK);
-	rec_set_heap_no_old(rec, PAGE_HEAP_NO_USER_LOW);
+	rec_set_bit_field_2(rec, PAGE_HEAP_NO_USER_LOW, REC_OLD_HEAP_NO,
+			    REC_HEAP_NO_MASK, REC_HEAP_NO_SHIFT);
 
 	/* Store the data and the offsets */
 
@@ -1526,7 +1527,9 @@ rec_convert_dtuple_to_rec_comp(
 		ut_ad(n_fields == ulint(index->n_fields) + 1);
 		rec_set_n_add_field(nulls, n_fields - 1
 				    - index->n_core_fields);
-		rec_set_heap_no_new(rec, PAGE_HEAP_NO_USER_LOW);
+		rec_set_bit_field_2(rec, PAGE_HEAP_NO_USER_LOW,
+				    REC_NEW_HEAP_NO, REC_HEAP_NO_MASK,
+				    REC_HEAP_NO_SHIFT);
 		rec_set_status(rec, REC_STATUS_INSTANT);
 		n_node_ptr_field = ULINT_UNDEFINED;
 		lens = nulls - UT_BITS_IN_BYTES(index->n_nullable);
@@ -1542,8 +1545,9 @@ rec_convert_dtuple_to_rec_comp(
 	case REC_STATUS_ORDINARY:
 		ut_ad(n_fields <= dict_index_get_n_fields(index));
 		if (!temp) {
-			rec_set_heap_no_new(rec, PAGE_HEAP_NO_USER_LOW);
-
+			rec_set_bit_field_2(rec, PAGE_HEAP_NO_USER_LOW,
+					    REC_NEW_HEAP_NO, REC_HEAP_NO_MASK,
+					    REC_HEAP_NO_SHIFT);
 			rec_set_status(
 				rec, n_fields == index->n_core_fields
 				     ? REC_STATUS_ORDINARY
@@ -1566,7 +1570,9 @@ rec_convert_dtuple_to_rec_comp(
 		break;
 	case REC_STATUS_NODE_PTR:
 		ut_ad(!temp);
-		rec_set_heap_no_new(rec, PAGE_HEAP_NO_USER_LOW);
+		rec_set_bit_field_2(rec, PAGE_HEAP_NO_USER_LOW,
+				    REC_NEW_HEAP_NO, REC_HEAP_NO_MASK,
+				    REC_HEAP_NO_SHIFT);
 		rec_set_status(rec, status);
 		ut_ad(n_fields
 		      == dict_index_get_n_unique_in_tree_nonleaf(index) + 1);
