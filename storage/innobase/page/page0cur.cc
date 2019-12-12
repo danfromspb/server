@@ -948,8 +948,9 @@ page_cur_parse_insert_rec(
 		rec_set_info_and_status_bits(buf + origin_offset,
 					     info_and_status_bits);
 	} else {
-		rec_set_info_bits_old(buf + origin_offset,
-				      info_and_status_bits);
+		rec_set_bit_field_1(buf + origin_offset, info_and_status_bits,
+				    REC_OLD_INFO_BITS,
+				    REC_INFO_BITS_MASK, REC_INFO_BITS_SHIFT);
 	}
 
 	page_cur_position(cursor_rec, block, &cursor);

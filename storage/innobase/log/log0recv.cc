@@ -1548,7 +1548,8 @@ parse_log:
 			     || (ibool)!!page_is_comp(page)
 			     == dict_table_is_comp(index->table));
 			ptr = btr_cur_parse_update_in_place(ptr, end_ptr, page,
-							    page_zip, index);
+							    page_zip, index,
+							    mtr);
 		}
 		break;
 	case MLOG_LIST_END_DELETE: case MLOG_COMP_LIST_END_DELETE:
