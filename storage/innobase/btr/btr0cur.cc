@@ -3894,8 +3894,7 @@ static void btr_cur_upd_rec_sys(buf_block_t *block, rec_t* rec,
 	ut_ad(rec_offs_validate(rec, index, offsets));
 
 	if (UNIV_LIKELY_NULL(block->page.zip.data)) {
-		page_zip_write_trx_id_and_roll_ptr(&block->page.zip,
-						   rec, offsets,
+		page_zip_write_trx_id_and_roll_ptr(block, rec, offsets,
 						   index->db_trx_id(),
 						   trx->id, roll_ptr, mtr);
 	} else {
@@ -4068,12 +4067,11 @@ static
 void
 row_upd_rec_in_place(
 /*=================*/
+	buf_block_t*	block,	/*!< in/out: index page */
 	rec_t*		rec,	/*!< in/out: record where replaced */
 	dict_index_t*	index,	/*!< in: the index the record belongs to */
 	const offset_t*	offsets,/*!< in: array returned by rec_get_offsets() */
 	const upd_t*	update,	/*!< in: update vector */
-	page_zip_des_t*	page_zip,/*!< in: compressed page with enough space
-				available, or NULL */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
 	const upd_field_t*	upd_field;
@@ -4136,8 +4134,8 @@ row_upd_rec_in_place(
 				  dfield_get_len(new_val));
 	}
 
-	if (page_zip) {
-		page_zip_write_rec(page_zip, rec, index, offsets, 0, mtr);
+	if (UNIV_LIKELY_NULL(block->page.zip.data)) {
+		page_zip_write_rec(block, rec, index, offsets, 0, mtr);
 	}
 }
 
@@ -4150,13 +4148,11 @@ btr_cur_parse_update_in_place(
 /*==========================*/
 	const byte*	ptr,	/*!< in: buffer */
 	const byte*	end_ptr,/*!< in: buffer end */
-	page_t*		page,	/*!< in/out: page or NULL */
-	page_zip_des_t*	page_zip,/*!< in/out: compressed page, or NULL */
+	buf_block_t*	block,	/*!< in/out: page or NULL */
 	dict_index_t*	index,	/*!< in: index corresponding to page */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
 	ulint		flags;
-	rec_t*		rec;
 	upd_t*		update;
 	ulint		pos;
 	trx_id_t	trx_id;
@@ -4194,13 +4190,14 @@ btr_cur_parse_update_in_place(
 
 	ptr = row_upd_index_parse(ptr, end_ptr, heap, &update);
 
-	if (!ptr || !page) {
-
-		goto func_exit;
+	if (!ptr || !block) {
+func_exit:
+		mem_heap_free(heap);
+		return ptr;
 	}
 
-	ut_a((ibool)!!page_is_comp(page) == dict_table_is_comp(index->table));
-	rec = page + rec_offset;
+	ut_a(!!page_is_comp(block->frame) == index->table->not_redundant());
+	rec_t* rec = block->frame + rec_offset;
 
 	/* We do not need to reserve search latch, as the page is only
 	being recovered, and there cannot be a hash index to it. */
@@ -4213,13 +4210,13 @@ btr_cur_parse_update_in_place(
 				  flags != (BTR_NO_UNDO_LOG_FLAG
 					    | BTR_NO_LOCKING_FLAG
 					    | BTR_KEEP_SYS_FLAG)
-				  || page_is_leaf(page),
+				  || page_is_leaf(block->frame),
 				  ULINT_UNDEFINED, &heap);
 
 	if (flags & BTR_KEEP_SYS_FLAG) {
-	} else if (page_zip) {
+	} else if (UNIV_LIKELY_NULL(block->page.zip.data)) {
 		page_zip_write_trx_id_and_roll_ptr(
-			page_zip, rec, offsets, pos, trx_id, roll_ptr, NULL);
+			block, rec, offsets, pos, trx_id, roll_ptr, mtr);
 	} else {
 		ulint len;
 		byte* field = rec_get_nth_field(rec, offsets, pos, &len);
@@ -4229,12 +4226,8 @@ btr_cur_parse_update_in_place(
 		trx_write_roll_ptr(field + DATA_TRX_ID_LEN, roll_ptr);
 	}
 
-	row_upd_rec_in_place(rec, index, offsets, update, page_zip, mtr);
-
-func_exit:
-	mem_heap_free(heap);
-
-	return(ptr);
+	row_upd_rec_in_place(block, rec, index, offsets, update, mtr);
+	goto func_exit;
 }
 
 /*************************************************************//**
@@ -4427,8 +4420,7 @@ void btr_cur_upd_rec_in_place(rec_t *rec, const dict_index_t *index,
 	}
 
 	if (UNIV_LIKELY_NULL(block->page.zip.data)) {
-		page_zip_write_rec(&block->page.zip, rec, index, offsets, 0,
-				   mtr);
+		page_zip_write_rec(block, rec, index, offsets, 0, mtr);
 	}
 }
 
@@ -5533,7 +5525,7 @@ void btr_rec_set_deleted(buf_block_t *block, rec_t *rec, mtr_t *mtr)
     else if (UNIV_LIKELY_NULL(block->page.zip.data))
     {
       *b= v;
-      page_zip_rec_set_deleted(&block->page.zip, rec, flag, mtr);
+      page_zip_rec_set_deleted(block, rec, flag, mtr);
     }
     else
       mtr->write<1>(*block, b, v);
@@ -5562,8 +5554,7 @@ btr_cur_parse_del_mark_set_clust_rec(
 /*=================================*/
 	const byte*	ptr,	/*!< in: buffer */
 	const byte*	end_ptr,/*!< in: buffer end */
-	page_t*		page,	/*!< in/out: page or NULL */
-	page_zip_des_t*	page_zip,/*!< in/out: compressed page, or NULL */
+	buf_block_t*	block,	/*!< in/out: page or NULL */
 	dict_index_t*	index,	/*!< in: index corresponding to page */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
@@ -5573,10 +5564,10 @@ btr_cur_parse_del_mark_set_clust_rec(
 	trx_id_t	trx_id;
 	roll_ptr_t	roll_ptr;
 	ulint		offset;
-	rec_t*		rec;
 
-	ut_ad(!page
-	      || !!page_is_comp(page) == dict_table_is_comp(index->table));
+	ut_ad(!block
+	      || !!page_is_comp(block->frame)
+	      == index->table->not_redundant());
 
 	if (end_ptr < ptr + 2) {
 
@@ -5609,14 +5600,14 @@ btr_cur_parse_del_mark_set_clust_rec(
 	always refer to an existing undo log record. */
 	ut_ad(trx_id || (flags & BTR_KEEP_SYS_FLAG));
 
-	if (page) {
-		rec = page + offset;
+	if (block) {
+		rec_t* rec = block->frame + offset;
 
 		/* We do not need to reserve search latch, as the page
 		is only being recovered, and there cannot be a hash index to
 		it. Besides, these fields are being updated in place
 		and the adaptive hash index does not depend on them. */
-		byte* b = rec - (page_is_comp(page)
+		byte* b = rec - (page_is_comp(block->frame)
 				 ? REC_NEW_INFO_BITS
 				 : REC_OLD_INFO_BITS);
 
@@ -5626,8 +5617,8 @@ btr_cur_parse_del_mark_set_clust_rec(
 			*b &= ~REC_INFO_DELETED_FLAG;
 		}
 
-		if (UNIV_LIKELY_NULL(page_zip)) {
-			page_zip_rec_set_deleted(page_zip, rec, val, mtr);
+		if (UNIV_LIKELY_NULL(block->page.zip.data)) {
+			page_zip_rec_set_deleted(block, rec, val, mtr);
 		}
 
 		/* pos is the offset of DB_TRX_ID in the clustered index.
@@ -5644,9 +5635,9 @@ btr_cur_parse_del_mark_set_clust_rec(
 			offset_t* offsets = rec_get_offsets(rec, index,
 							    offsets_, true,
 							    pos + 2, &heap);
-			if (page_zip) {
+			if (UNIV_LIKELY_NULL(block->page.zip.data)) {
 				page_zip_write_trx_id_and_roll_ptr(
-					page_zip, rec, offsets, pos, trx_id,
+					block, rec, offsets, pos, trx_id,
 					roll_ptr, mtr);
 			} else {
 				ulint	len;
@@ -5766,13 +5757,11 @@ btr_cur_parse_del_mark_set_sec_rec(
 /*===============================*/
 	const byte*	ptr,	/*!< in: buffer */
 	const byte*	end_ptr,/*!< in: buffer end */
-	page_t*		page,	/*!< in/out: page or NULL */
-	page_zip_des_t*	page_zip,/*!< in/out: compressed page, or NULL */
+	buf_block_t*	block,	/*!< in/out: page or NULL */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
 	ulint	val;
 	ulint	offset;
-	rec_t*	rec;
 
 	if (end_ptr < ptr + 3) {
 
@@ -5787,29 +5776,31 @@ btr_cur_parse_del_mark_set_sec_rec(
 
 	ut_a(offset <= srv_page_size);
 
-	if (page) {
-		rec = page + offset;
-
-		/* We do not need to reserve search latch, as the page
-		is only being recovered, and there cannot be a hash index to
-		it. Besides, the delete-mark flag is being updated in place
-		and the adaptive hash index does not depend on it. */
-		byte* b = page + offset - (page_is_comp(page)
-					   ? REC_NEW_INFO_BITS
-					   : REC_OLD_INFO_BITS);
-
-		if (val) {
-			*b |= REC_INFO_DELETED_FLAG;
-		} else {
-			*b &= ~REC_INFO_DELETED_FLAG;
-		}
-
-		if (UNIV_LIKELY_NULL(page_zip)) {
-			page_zip_rec_set_deleted(page_zip, rec, val, mtr);
-		}
+	if (!block) {
+		return ptr;
 	}
 
-	return(ptr);
+	rec_t* rec = block->frame + offset;
+
+	/* We do not need to reserve search latch, as the page
+	is only being recovered, and there cannot be a hash index to
+	it. Besides, the delete-mark flag is being updated in place
+	and the adaptive hash index does not depend on it. */
+	byte* b = rec - (page_is_comp(block->frame)
+			 ? REC_NEW_INFO_BITS
+			 : REC_OLD_INFO_BITS);
+
+	if (val) {
+		*b |= REC_INFO_DELETED_FLAG;
+	} else {
+		*b &= ~REC_INFO_DELETED_FLAG;
+	}
+
+	if (UNIV_LIKELY_NULL(block->page.zip.data)) {
+		page_zip_rec_set_deleted(block, rec, val, mtr);
+	}
+
+	return ptr;
 }
 
 /*==================== B-TREE RECORD REMOVE =========================*/
