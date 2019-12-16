@@ -31,6 +31,7 @@ Refactored 2013-7-26 by Kevin Lewis
 #include "mem0mem.h"
 #include "os0file.h"
 #include "row0mysql.h"
+#include "buf0dblwr.h"
 
 /** The server header file is included to access opt_initialize global variable.
 If server passes the option for create/open DB to SE, we should remove such

@@ -368,15 +368,12 @@ page_zip_dir_get(
 static void page_zip_compress_write_log(buf_block_t* block,
 					dict_index_t* index, mtr_t* mtr)
 {
-	byte*	log_ptr;
 	ulint	trailer_size;
 
 	ut_ad(!dict_index_is_ibuf(index));
-
-	log_ptr = mlog_open(mtr, 11);
-
-	if (!log_ptr) {
-
+	if (mtr->get_log_mode() != MTR_LOG_ALL) {
+		ut_ad(mtr->get_log_mode() == MTR_LOG_NONE
+		      || mtr->get_log_mode() == MTR_LOG_NO_REDO);
 		return;
 	}
 
@@ -400,12 +397,7 @@ static void page_zip_compress_write_log(buf_block_t* block,
 	compile_time_assert(FIL_PAGE_DATA <= PAGE_DATA);
 	ut_a(page_zip->m_end + trailer_size <= page_zip_get_size(page_zip));
 
-	log_ptr = mlog_write_initial_log_record_low(MLOG_INIT_FILE_PAGE2,
-						    block->page.id.space(),
-						    block->page.id.page_no(),
-						    log_ptr, mtr);
-	mlog_close(mtr, log_ptr);
-
+	mtr->init(block);
 	mtr->zmemcpy(block->page, FIL_PAGE_PREV,
 		     page_zip->m_end - FIL_PAGE_PREV);
 
