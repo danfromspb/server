@@ -449,12 +449,6 @@ or the MySQL version that created the redo log file. */
 					header */
 #define LOG_FILE_HDR_SIZE	(4 * OS_FILE_LOG_BLOCK_SIZE)
 
-/* As long as fil_io() is used to handle log io, log group max size is limited
-by (maximum page number) * (minimum page size). Page number type is uint32_t.
-Remove this limitation if page number is no longer used for log file io. */
-static const ulonglong log_group_max_size =
-	((ulonglong(UINT32_MAX) + 1) * UNIV_PAGE_SIZE_MIN - 1);
-
 typedef ib_mutex_t	LogSysMutex;
 typedef ib_mutex_t	FlushOrderMutex;
 
