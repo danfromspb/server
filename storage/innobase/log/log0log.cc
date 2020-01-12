@@ -590,6 +590,7 @@ void log_t::create()
 
 void log_t::files::set_file_names(std::vector<std::string> names)
 {
+  ut_ad(names.size() == 1);
   file_names= std::move(names);
 }
 
