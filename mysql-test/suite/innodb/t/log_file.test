@@ -192,7 +192,7 @@ let SEARCH_PATTERN=InnoDB: Expected to open innodb_undo_tablespaces=3 but was ab
 --source include/start_mysqld.inc
 eval $check_no_innodb;
 --source include/shutdown_mysqld.inc
-let SEARCH_PATTERN=redo log file .*ib_logfile0.* exists\. Creating system tablespace with existing redo log files is not recommended\. Please delete all redo log files before creating new system tablespace\.;
+let SEARCH_PATTERN=redo log file .*ib_logfile0.* exists\. Creating system tablespace with existing redo log file is not recommended\. Please delete redo log file before creating new system tablespace\.;
 --source include/search_pattern_in_file.inc
 
 # clean up & Restore
