@@ -689,11 +689,6 @@ void recv_sys_t::close()
 		dblwr.pages.clear();
 		pages.clear();
 
-		if (heap) {
-			mem_heap_free(heap);
-			heap = NULL;
-		}
-
 		if (flush_start) {
 			os_event_destroy(flush_start);
 		}
@@ -800,8 +795,6 @@ void recv_sys_t::create()
 	mutex_create(LATCH_ID_RECV_SYS, &mutex);
 	mutex_create(LATCH_ID_RECV_WRITER, &writer_mutex);
 
-	heap = mem_heap_create_typed(256, MEM_HEAP_FOR_RECV_SYS);
-
 	if (!srv_read_only_mode) {
 		flush_start = os_event_create(0);
 		flush_end = os_event_create(0);
@@ -811,6 +804,7 @@ void recv_sys_t::create()
 	apply_log_recs = false;
 	apply_batch_on = false;
 
+	num_max_blocks = buf_pool_get_n_pages() / 3;
 	recv_n_pool_free_frames = buf_pool_get_n_pages() / 3;
 
 	buf = static_cast<byte*>(ut_malloc_dontdump(RECV_PARSING_BUF_SIZE));
@@ -830,14 +824,24 @@ void recv_sys_t::create()
 
 	memset(truncated_undo_spaces, 0, sizeof truncated_undo_spaces);
 	last_stored_lsn = 0;
+	UT_LIST_INIT(redo_list, &buf_block_t::unzip_LRU);
 }
 
 /** Clear a fully processed set of stored redo log records. */
 inline void recv_sys_t::clear()
 {
-	ut_ad(mutex_own(&mutex));
-	pages.clear();
-	mem_heap_empty(heap);
+  ut_ad(mutex_own(&mutex));
+  pages.clear();
+
+  buf_block_t* prev_block= nullptr;
+  for (buf_block_t* block= UT_LIST_GET_LAST(redo_list);
+       block; block= prev_block)
+  {
+     prev_block= UT_LIST_GET_PREV(unzip_LRU, block);
+     ut_ad(buf_block_get_state(block) == BUF_BLOCK_MEMORY);
+     UT_LIST_REMOVE(redo_list, block);
+     buf_block_free(block);
+  }
 }
 
 /** Free most recovery data structures. */
@@ -848,11 +852,9 @@ void recv_sys_t::debug_free()
 	mutex_enter(&mutex);
 
 	pages.clear();
-	mem_heap_free(heap);
 	ut_free_dodump(buf, buf_size);
 
 	buf = NULL;
-	heap = NULL;
 
 	/* wake page cleaner up to progress */
 	if (!srv_read_only_mode) {
@@ -863,6 +865,78 @@ void recv_sys_t::debug_free()
 	}
 
 	mutex_exit(&mutex);
+}
+
+ulong recv_sys_t::get_free_len()
+{
+  if (UT_LIST_GET_LEN(redo_list) == 0)
+    return 0;
+
+  return srv_page_size - UT_LIST_GET_FIRST(redo_list)->modify_clock;
+}
+
+byte* recv_sys_t::get_mem_block(uint32_t len, bool store_data)
+{
+  buf_block_t* block= UT_LIST_GET_FIRST(redo_list);
+  ib_uint64_t free_offset= (block == NULL) ? 0:block->modify_clock;
+
+  if (!store_data &&
+      (free_offset + len + sizeof(recv_t::data) + 1) >= srv_page_size)
+     goto create_block;
+
+  if (!UT_LIST_GET_LEN(redo_list))
+    goto create_block;
+  if (free_offset + len <= srv_page_size)
+  {
+    if (store_data)
+      block->page.fix();
+    block->modify_clock += len;
+  } else {
+create_block:
+    buf_block_t* new_block= buf_block_alloc(nullptr);
+    new_block->modify_clock= 0;
+    UT_LIST_ADD_FIRST(redo_list, new_block);
+
+    if (store_data)
+      new_block->page.fix();
+
+    if (len < srv_page_size)
+      new_block->modify_clock += len;
+    else
+      new_block->modify_clock= srv_page_size;
+
+    return new_block->frame;
+  }
+  return block->frame + free_offset;
+}
+
+void recv_sys_t::remove_free_blocks()
+{
+  buf_block_t* prev_block= NULL;
+  for (buf_block_t* block= UT_LIST_GET_LAST(redo_list);
+       block != NULL; )
+  {
+    prev_block= UT_LIST_GET_PREV(unzip_LRU, block);
+    if (0 == static_cast<uint32_t>(block->page.buf_fix_count))
+    {
+      UT_LIST_REMOVE(redo_list, block);
+      buf_block_free(block);
+    }
+
+    block= prev_block;
+  }
+}
+
+buf_block_t* recv_sys_t::get_block(page_t* page)
+{
+  for (buf_block_t* block= UT_LIST_GET_LAST(redo_list);
+       block != NULL; block = UT_LIST_GET_PREV(unzip_LRU, block))
+  {
+     if (block->frame == page)
+       return block;
+  }
+
+  return NULL;
 }
 
 /** Read a log segment to log_sys.buf.
@@ -1759,16 +1833,16 @@ inline void recv_sys_t::add(mlog_id_t type, const page_id_t page_id,
   /* Store the log record body in limited-size chunks, because the
   heap grows into the buffer pool. */
   uint32_t len= uint32_t(rec_end - body);
-  const uint32_t chunk_limit= static_cast<uint32_t>(RECV_DATA_BLOCK_SIZE);
 
-  recv_t *recv= new (mem_heap_alloc(heap, sizeof(recv_t)))
-    recv_t(len, type, lsn, end_lsn);
+  recv_t* recv = new (get_mem_block(sizeof(recv_t)))
+	  recv_t(len, type, lsn, end_lsn);
   recs.log.append(recv);
 
   for (recv_t::data_t *prev= NULL;;) {
-    const uint32_t l= std::min(len, chunk_limit);
-    recv_t::data_t *d= new (mem_heap_alloc(heap, sizeof(recv_t::data_t) + l))
-      recv_t::data_t(body, l);
+    uint32_t data_free_limit = get_free_len() - sizeof(recv_t::data);
+    const uint32_t l= std::min(len, data_free_limit);
+    recv_t::data_t *d= new (get_mem_block(
+	sizeof(recv_t::data) + l, true)) recv_t::data_t(body, l);
     if (prev)
       prev->append(d);
     else
@@ -1819,15 +1893,23 @@ recv_data_copy_to_buf(
 	const recv_t& recv)	/*!< in: log record */
 {
 	const recv_t::data_t* recv_data = recv.data;
+	page_t* initial_page = page_align(recv_data);
 	ulint len = recv.len;
-	const ulint chunk_limit = static_cast<ulint>(RECV_DATA_BLOCK_SIZE);
 
 	do {
+		ulint offset = page_offset(recv_data + 1);
+		buf_block_t* block = recv_sys.get_block(
+				page_align(recv_data));
+		const ulint chunk_limit = (srv_page_size - offset);
 		const ulint l = std::min(len, chunk_limit);
 		memcpy(buf, reinterpret_cast<const byte*>(recv_data + 1), l);
 		recv_data = recv_data->next;
 		buf += l;
 		len -= l;
+
+		if (initial_page != block->frame) {
+			block->page.unfix();
+		}
 	} while (len);
 }
 
@@ -1870,7 +1952,6 @@ static void recv_recover_page(buf_block_t* block, mtr_t& mtr,
 	lsn_t start_lsn = 0, end_lsn = 0;
 	ut_d(lsn_t recv_start_lsn = 0);
 	const lsn_t init_lsn = init ? init->lsn : 0;
-	const ulint chunk_limit = static_cast<ulint>(RECV_DATA_BLOCK_SIZE);
 
 	for (const log_rec_t* l : p->second.log) {
 		ut_ad(l->lsn);
@@ -1915,10 +1996,13 @@ static void recv_recover_page(buf_block_t* block, mtr_t& mtr,
 				 << " len " << recv->len
 				 << " page " << block->page.id);
 
+			ulint data_offset = page_offset(recv->data + 1);
 			byte* buf;
 			const byte* recs;
+			buf_block_t* first_block = recv_sys.get_block(
+				page_align(recv->data + 1));
 
-			if (UNIV_UNLIKELY(recv->len > chunk_limit)) {
+			if (srv_page_size - data_offset < recv->len) {
 				/* We have to copy the record body to
 				a separate buffer */
 				recs = buf = static_cast<byte*>
@@ -1933,6 +2017,8 @@ static void recv_recover_page(buf_block_t* block, mtr_t& mtr,
 			recv_parse_or_apply_log_rec_body(
 				recv->type, recs, recs + recv->len,
 				block->page.id, true, block, &mtr);
+
+			first_block->page.unfix();
 			ut_free(buf);
 
 			end_lsn = recv->start_lsn + recv->len;
@@ -2500,7 +2586,8 @@ of buffer pool. Store last_stored_lsn if it is not in last phase
 				read redo logs. */
 static bool recv_sys_heap_check(store_t* store, ulint available_mem)
 {
-  if (*store != STORE_NO && mem_heap_get_size(recv_sys.heap) >= available_mem)
+  if (*store != STORE_NO
+      && UT_LIST_GET_LEN(recv_sys.redo_list) >= recv_sys.num_max_blocks)
   {
     if (*store == STORE_YES)
       recv_sys.last_stored_lsn= recv_sys.recovered_lsn;
@@ -2509,7 +2596,8 @@ static bool recv_sys_heap_check(store_t* store, ulint available_mem)
     DBUG_PRINT("ib_log",("Ran out of memory and last "
 			 "stored lsn " LSN_PF " last stored offset "
 			 ULINTPF "\n",
-			 recv_sys.recovered_lsn, recv_sys.recovered_offset));
+			 recv_sys.recovered_lsn,
+			 recv_sys.recovered_offset));
     return true;
   }
 

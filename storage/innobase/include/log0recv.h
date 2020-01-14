@@ -284,13 +284,9 @@ struct recv_sys_t{
 				record, or 0 if none was parsed */
 	/** the time when progress was last reported */
 	time_t		progress_time;
-	mem_heap_t*	heap;	/*!< memory heap of log records and file
-				addresses*/
 
 	using map = std::map<const page_id_t, page_recv_t,
-			     std::less<const page_id_t>,
-			     ut_allocator
-			     <std::pair<const page_id_t, page_recv_t>>>;
+			     std::less<const page_id_t>>;
 	/** buffered records waiting to be applied to pages */
 	map pages;
 
@@ -313,6 +309,12 @@ struct recv_sys_t{
 
 	/** Last added LSN to pages. */
 	lsn_t		last_stored_lsn;
+
+	/** Number of max blocks to store the redo log */
+	ulint		num_max_blocks;
+
+	/** Base node of the redo block list */
+	UT_LIST_BASE_NODE_T(buf_block_t) redo_list;
 
 	/** Initialize the redo log recovery subsystem. */
 	void create();
@@ -352,6 +354,25 @@ struct recv_sys_t{
 		progress_time = time;
 		return true;
 	}
+
+	/** Get the memory block for storing recv_t and redo log data
+	@param[in] len length of the data to be stored
+	@param[in] store_data whether the redo log data to be stored
+	@return block of the data to be stored */
+	byte* get_mem_block(uint32_t len, bool store_data=false);
+
+	/** Get the free length of the latest block
+	@return free length */
+	ulong get_free_len();
+
+	/** Get the block for the given page by traversing the redo
+	list in recv_sys
+	@param[in] page page of the redo log data
+	@return block */
+	buf_block_t* get_block(byte* page);
+
+	/** Remove the free blocks from redo list */
+	void remove_free_blocks();
 };
 
 /** The recovery system */
